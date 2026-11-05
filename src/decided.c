@@ -32,7 +32,28 @@ void dbus_method_vtable_handler(
 );
 void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer user_data);
 
+//for once xml makes my life easier and not harder
+const char *xml_schema =
+"<node>"
+"	<interface name=\"org.freedesktop.impl.portal.FileChooser\">"
+"		<method name=\"OpenFile\">"
+"			<arg type=\"o\" name=\"handle\" direction=\"in\"/>"
+"			<arg type=\"s\" name=\"app_id\" direction=\"in\"/>"
+"			<arg type=\"s\" name=\"parent_window\" direction=\"in\"/>"
+"			<arg type=\"s\" name=\"title\" direction=\"in\"/>"
+"			<arg type=\"a\{sv}\" name=\"options\" direction=\"in\"/>"
+"			<arg type=\"u\" name=\"response\" direction=\"out\"/>"
+"			<arg type=\"a{sv}\" name=\"results\" direction=\"out\"/>"
+"		</method>"
+"	</interface>"
+"</node>";
+
+//i justify this global because it is const and has a lifetime of 'static
+GDBusNodeInfo *introspection_data = NULL;
+
 int main(int, char **) {
+	//preload our introspection data
+	introspection_data = g_dbus_node_info_new_for_xml(xml_schema, NULL);
 	//create a mainloop
 	GMainLoop *mainloop = g_main_loop_new(NULL,true);
 	//initialise our application
@@ -55,6 +76,7 @@ int main(int, char **) {
 	g_main_loop_run(mainloop);
 	//cleanup
 	g_bus_unown_name(owner_id);
+	g_dbus_node_info_unref(introspection_data);
 	g_main_loop_unref(mainloop);
 	free(state.name);
 	return EXIT_SUCCESS;
@@ -64,63 +86,7 @@ void bus_acquired_handler(GDBusConnection *bus, const gchar *, gpointer user_dat
 	struct application_state *state = user_data;
 	printf("bus acquired\n");
 	//====== publish objects ======
-	//setup OpenFile method arguments
-	static GDBusArgInfo open_file_method_in_args_handle = {
-		.ref_count = -1, .name = "handle", .signature = "o",
-	};
-	static GDBusArgInfo open_file_method_in_args_app_id = {
-		.ref_count = -1, .name = "app_id", .signature = "s",
-	};
-	static GDBusArgInfo open_file_method_in_args_parent_window = {
-		.ref_count = -1, .name = "parent_window", .signature = "s",
-	};
-	static GDBusArgInfo open_file_method_in_args_title = {
-		.ref_count = -1, .name = "title", .signature = "s",
-	};
-	static GDBusArgInfo open_file_method_in_args_options = {
-		.ref_count = -1, .name = "options", .signature = "a{sv}",
-	};
-	static GDBusArgInfo open_file_method_out_args_response = {
-		.ref_count = -1, .name = "response", .signature = "u",
-	};
-	static GDBusArgInfo open_file_method_out_args_results = {
-		.ref_count = -1, .name = "results", .signature = "a{sv}",
-	};
-	static GDBusArgInfo *open_file_method_in_args[] = {
-		&open_file_method_in_args_handle,
-		&open_file_method_in_args_app_id,
-		&open_file_method_in_args_parent_window,
-		&open_file_method_in_args_title,
-		&open_file_method_in_args_options,
-		NULL,
-	};
-	static GDBusArgInfo *open_file_method_out_args[] = {
-		&open_file_method_out_args_response,
-		&open_file_method_out_args_results,
-		NULL,
-	};
-	static GDBusMethodInfo open_file_method = {
-		.ref_count = -1,
-		.name = "OpenFile",
-		.in_args = open_file_method_in_args,
-		.out_args = open_file_method_out_args,
-	};
-	static GDBusMethodInfo *interface_methods[] = {
-		&open_file_method,
-		NULL,
-	};
-	//load into interface
-	static GDBusInterfaceInfo interface = {
-		.ref_count = -1,
-		.name = "org.freedesktop.impl.portal.FileChooser",
-		.methods = interface_methods,
-	};
 	//create vtable
-	static GDBusInterfaceVTable method_vtable = {
-		.method_call = dbus_method_vtable_handler,
-		.get_property = NULL,
-		.set_property = NULL,
-	};
 	static struct vtable_handler_data vtable_info = {
 		.user_data = NULL,
 		.entries = {
@@ -134,7 +100,7 @@ void bus_acquired_handler(GDBusConnection *bus, const gchar *, gpointer user_dat
 	guint id = g_dbus_connection_register_object(
 		bus,
 		"/org/freedesktop/portal/desktop",
-		&interface,
+		introspection_data->interfaces[0],
 		NULL,
 		user_data,
 		NULL,
