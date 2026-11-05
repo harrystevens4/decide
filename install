@@ -1,0 +1,4 @@
+#!/bin/sh
+cp org.freedesktop.impl.portal.desktop.decide.service /usr/share/dbus-1/services
+cp decide.portal /usr/share/xdg-desktop-portal/portals
+cp decide decided /usr/bin/
