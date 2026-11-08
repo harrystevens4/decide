@@ -3,10 +3,16 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <gio/gio.h>
+#include <alloca.h>
+#include "ipc.h"
+#include <sys/socket.h>
+
+#define FLAG_MULTIPLE_FILES 1
 
 struct application_state {
 	GMainLoop *mainloop;
 	char *name;
+	int ipc_socket;
 };
 
 void bus_acquired_handler(GDBusConnection *bus, const gchar *name, gpointer user_data);
@@ -44,15 +50,23 @@ const char *xml_schema =
 GDBusNodeInfo *introspection_data = NULL;
 
 int main(int, char **) {
+	//initialise our application
+	int ipc_socket = new_socket_server();
+	if (ipc_socket < 0) return EXIT_FAILURE;
+	if (listen(ipc_socket,10) < 0) {
+		perror("listen");
+		close(ipc_socket);
+		return EXIT_FAILURE;
+	}
+	struct application_state state = {
+		.name = NULL,
+		.ipc_socket = ipc_socket,
+	};
 	//preload our introspection data
 	introspection_data = g_dbus_node_info_new_for_xml(xml_schema, NULL);
 	//create a mainloop
 	GMainLoop *mainloop = g_main_loop_new(NULL,true);
-	//initialise our application
-	struct application_state state = {
-		.mainloop = mainloop,
-		.name = NULL,
-	};
+	state.mainloop = mainloop;
 	//connect to the session bus
 	int owner_id = g_bus_own_name(
 		G_BUS_TYPE_SESSION,
@@ -71,6 +85,7 @@ int main(int, char **) {
 	g_dbus_node_info_unref(introspection_data);
 	g_main_loop_unref(mainloop);
 	free(state.name);
+	close(ipc_socket);
 	return EXIT_SUCCESS;
 }
 
@@ -132,18 +147,90 @@ void dbus_method_handler(
 	printf("ignoring unknown method \"%s\"\n",method_name);
 }
 
-void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer user_data) {
-	printf("open_file called\n");
+GVariant *listen_for_filenames(int socket, int flags) {
+	//contact selector process
+	int selector_fd = accept(socket,NULL,NULL);
+	if (selector_fd < 0) {
+		perror("accept");
+		return NULL;
+	}
+	char **file_names;
+	size_t file_name_count;
+	if (receive_files(selector_fd,&file_names,&file_name_count) < 0) return NULL;
+	int response_status = STATUS_OK;
+	if (file_name_count < 1) response_status = STATUS_NO_FILES_PROVIDED;
+	if (file_name_count > 1 && (flags & FLAG_MULTIPLE_FILES) == 0) {
+		response_status = STATUS_TOO_MANY_FILES;
+	}
+	if (send_response(selector_fd,response_status) < 0) {
+		free_files(file_names);
+		close(selector_fd);
+		return NULL;
+	}
+	close(selector_fd);
+	if (response_status == STATUS_OK) {
+		//create the array of strings
+		GVariant *filename_strings[file_name_count*sizeof(GVariant *)];
+		for (size_t i = 0; i < file_name_count; i++) {
+			filename_strings[i] = g_variant_new_string(file_names[i]);
+		}
+		free_files(file_names);
+		return g_variant_new_array(
+			NULL,
+			filename_strings,
+			file_name_count
+		);
+	} else {
+		free_files(file_names);
+		return NULL;
+	}
 }
 
-bool handle_set_property (GDBusConnection  *connection,
-	const gchar      *,
-	const gchar      *,
-	const gchar      *,
-	const gchar      *,
-	GVariant         *,
-	GError          **,
-	gpointer          
-) {
-	return true;
+void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer user_data) {
+	struct application_state *state = user_data;
+	printf("open_file called\n");
+	char *parameters_str = g_variant_print(parameters,true);
+	printf("arguments: %s\n",parameters_str);
+	//parse arguments
+	gchar *handle;
+	gchar *app_id;
+	gchar *parent_window;
+	gchar *title;
+	GVariantIter *options;
+	g_variant_get(parameters,"(osssa{sv})",&handle,&app_id,&parent_window,&title,&options);
+	//get the files from the socket
+	GVariant *filename_array = listen_for_filenames(state->ipc_socket,FLAG_MULTIPLE_FILES);
+	if (filename_array != NULL) {
+		char *filenames_str = g_variant_print(filename_array,false);
+		printf("selected files: %s\n",filenames_str);
+		//create the dict of return attributes
+		GVariant *uris_dict_entry = g_variant_new_dict_entry(
+			g_variant_new_string("uris"),
+			g_variant_new("v",filename_array)
+		);
+		g_auto(GVariantBuilder) return_dict = G_VARIANT_BUILDER_INIT(G_VARIANT_TYPE_ARRAY);
+		g_variant_builder_add_value(&return_dict,uris_dict_entry);
+
+		//return
+		GVariant *return_value = g_variant_new(
+			"(ua{sv})",
+			g_variant_new_uint32(0),
+			&return_dict
+		);
+		g_dbus_method_invocation_return_value(invocation,return_value);
+	} else {
+		printf("canceled selection\n");
+		g_dbus_method_invocation_return_error_literal(
+			invocation,
+			g_quark_from_static_string("IO error"),
+			1,
+			"Error occured while talking to chooser process"
+		);
+	}
+	//cleanup
+	g_free(handle);
+	g_free(app_id);
+	g_free(parent_window);
+	g_variant_iter_free(options);
+	g_free(title);
 }
