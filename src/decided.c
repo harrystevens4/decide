@@ -189,7 +189,7 @@ GVariant *listen_for_filenames(int socket, int flags) {
 		//create the array of strings
 		GVariant *filename_strings[file_name_count*sizeof(GVariant *)];
 		for (size_t i = 0; i < file_name_count; i++) {
-			filename_strings[i] = g_variant_new_string(file_names[i]);
+			filename_strings[i] = g_variant_new_printf("file://%s",file_names[i]);
 		}
 		free_files(file_names);
 		return g_variant_new_array(
