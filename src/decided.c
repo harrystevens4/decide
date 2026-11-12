@@ -11,8 +11,14 @@
 
 struct application_state {
 	GMainLoop *mainloop;
+	GApplication *app;
 	char *name;
 	int ipc_socket;
+};
+
+struct notification {
+	char *title;
+	char *body;
 };
 
 void bus_acquired_handler(GDBusConnection *bus, const gchar *name, gpointer user_data);
@@ -29,6 +35,7 @@ void dbus_method_handler(
 		gpointer user_data
 );
 void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer user_data);
+void send_notification(GApplication *app, const struct notification *info);
 
 //for once xml makes my life easier and not harder
 const char *xml_schema =
@@ -50,7 +57,12 @@ const char *xml_schema =
 GDBusNodeInfo *introspection_data = NULL;
 
 int main(int, char **) {
-	//initialise our application
+	//create our application instance
+	GApplication *application = g_application_new(
+		"org.stevens-server.decide",
+		G_APPLICATION_DEFAULT_FLAGS
+	);
+	//initialise our stuff
 	int ipc_socket = new_socket_server();
 	if (ipc_socket < 0) return EXIT_FAILURE;
 	if (listen(ipc_socket,10) < 0) {
@@ -61,6 +73,7 @@ int main(int, char **) {
 	struct application_state state = {
 		.name = NULL,
 		.ipc_socket = ipc_socket,
+		.app = application,
 	};
 	//preload our introspection data
 	introspection_data = g_dbus_node_info_new_for_xml(xml_schema, NULL);
@@ -78,6 +91,10 @@ int main(int, char **) {
 		&state,
 		NULL
 	);
+	//register application
+	if (g_application_register(application,NULL,NULL) == false) {
+		fprintf(stderr,"failed to register application\n");
+	}
 	//run the mainloop
 	g_main_loop_run(mainloop);
 	//cleanup
@@ -198,6 +215,11 @@ void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer
 	gchar *title;
 	GVariantIter *options;
 	g_variant_get(parameters,"(osssa{sv})",&handle,&app_id,&parent_window,&title,&options);
+	//notify the user we are waiting for them to select a file
+	send_notification(state->app,&(struct notification){
+		.title = "decided file chooser",
+		.body = "please select a file to upload",
+	});
 	//get the files from the socket
 	GVariant *filename_array = listen_for_filenames(state->ipc_socket,FLAG_MULTIPLE_FILES);
 	if (filename_array != NULL) {
@@ -233,4 +255,11 @@ void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer
 	g_free(parent_window);
 	g_variant_iter_free(options);
 	g_free(title);
+}
+
+void send_notification(GApplication *app,const struct notification *info) {
+	GNotification *notification = g_notification_new(info->title);
+	if (info->body != NULL) g_notification_set_body(notification,info->body);
+	g_application_send_notification(app,NULL,notification);
+	g_object_unref(notification);
 }
