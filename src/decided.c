@@ -214,7 +214,7 @@ void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer
 		//return
 		GVariant *return_value = g_variant_new(
 			"(ua{sv})",
-			g_variant_new_uint32(0),
+			0,
 			&return_dict
 		);
 		g_dbus_method_invocation_return_value(invocation,return_value);
