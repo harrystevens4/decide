@@ -246,9 +246,14 @@ void open_file(GVariant *parameters, GDBusMethodInvocation *invocation, gpointer
 			invocation,
 			g_quark_from_static_string("IO error"),
 			1,
-			"Error occured while talking to chooser process"
+			"Error occurred while talking to chooser process"
 		);
 	}
+	//tell the user it was successfull
+	send_notification(state->app,&(struct notification){
+		.title = "decided file chooser",
+		.body = "files selected successfully",
+	});
 	//cleanup
 	g_free(handle);
 	g_free(app_id);
