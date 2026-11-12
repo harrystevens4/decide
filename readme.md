@@ -7,7 +7,7 @@ this is a desktop portal for file selection (please consult flowchart to see if 
 - running `decide /tmp/Makefile.txt` in terminal selects file
 - thats it
 
-```txt
+```
    .----------------.
   |                  |
   |      start       |
